@@ -55,21 +55,14 @@ func (mr *MapReduce) scheduleJob(worker WorkerInfo, args DoJobArgs, waitGroup *s
 }
 
 func (mr *MapReduce) redoJob(worker WorkerInfo, waitGroup *sync.WaitGroup) {
-
-	jobArgs := DoJobArgs{
-		File:          mr.file,
-		Operation:     worker.jobType,
-		JobNumber:     worker.lastJobId,
-		NumOtherPhase: mr.nReduce,
+	// add back to job queue
+	switch worker.jobType {
+	case Map:
+		mr.mapJobs = append(mr.mapJobs, worker.lastJobId)
+	case Reduce:
+		mr.reduceJobs = append(mr.reduceJobs, worker.lastJobId)
 	}
-
-	log.Printf("RunMaster: %s redo the job %s \t %v \n", worker.address, worker.jobType, jobArgs.JobNumber)
-
-	if worker.jobType == Reduce {
-		jobArgs.NumOtherPhase = mr.nMap
-	}
-
-	mr.scheduleJob(worker, jobArgs, waitGroup)
+	waitGroup.Done()
 }
 
 func (mr *MapReduce) getNextJob(jobType JobType) (DoJobArgs, error) {
@@ -168,34 +161,5 @@ func (mr *MapReduce) RunMaster() *list.List {
 	}
 	waitGroup.Wait()
 	return mr.KillWorkers()
-
-	//mapJobsDone = false
-	//for !mapJobsDone {
-	//	//var worker string
-	//	select {
-	//	case worker = <-mr.registerChannel:
-	//		workerInfo := &WorkerInfo{address: worker}
-	//		mr.Workers[worker] = workerInfo
-	//	case worker = <-mr.failedMapWorker:
-	//	case worker = <-mr.availableWorkers:
-	//	}
-	//
-	//	jobId, err := mr.getNextReduceJob()
-	//	if err != nil {
-	//		if err.Error() == "JobDone" {
-	//			mapJobsDone = true
-	//			go mr.appendWorker(worker)
-	//			break
-	//		}
-	//		go mr.appendWorker(worker)
-	//		continue
-	//	}
-	//	log.Printf("RunMster: getNextReduceJob id  %v\n", jobId)
-	//	rargs.JobNumber = jobId
-	//	waitGroup.Add(1)
-	//	go mr.scheduleReduceJob(worker, rargs, waitGroup)
-	//}
-	//waitGroup.Wait()
-	//log.Printf("RunMaster: Reduce FINISHED!!!")
 
 }
