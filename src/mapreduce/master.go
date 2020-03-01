@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"errors"
 	"log"
-	"sync"
 )
 import "fmt"
 
@@ -33,7 +32,7 @@ func (mr *MapReduce) KillWorkers() *list.List {
 	return l
 }
 
-func (mr *MapReduce) scheduleJob(worker WorkerInfo, args DoJobArgs, waitGroup *sync.WaitGroup) {
+func (mr *MapReduce) scheduleJob(worker WorkerInfo, args DoJobArgs) {
 
 	// update info in worker
 	worker.lastJobId = args.JobNumber
@@ -43,18 +42,17 @@ func (mr *MapReduce) scheduleJob(worker WorkerInfo, args DoJobArgs, waitGroup *s
 
 	ok := call(worker.address, "Worker.DoJob", args, &reply)
 	if ok == false {
-		log.Printf("RunMaster: worker %s  jobnum %v map failed \t reply: %t\n", worker.address, args.JobNumber, reply.OK)
+		log.Printf("RunMaster: worker %s  jobnum %v %s failed \t reply: %t\n", worker.address, args.JobNumber, worker.jobType, reply.OK)
 		mr.failedWorkers <- worker
-		waitGroup.Done()
+		mr.jobStats.deleteMap(worker.lastJobId)
 	} else {
-		log.Printf("RunMaster: worker %s  jobnum %v map success!\n", worker.address, args.JobNumber)
-		delete(mr.jobStats, worker.lastJobId) // update the last job state
+		log.Printf("RunMaster: worker %s  jobnum %v %s success!\n", worker.address, args.JobNumber, worker.jobType)
+		mr.jobStats.deleteMap(worker.lastJobId)
 		mr.availableWorkers <- worker
-		waitGroup.Done()
 	}
 }
 
-func (mr *MapReduce) redoJob(worker WorkerInfo, waitGroup *sync.WaitGroup) {
+func (mr *MapReduce) redoJob(worker WorkerInfo) {
 	// add back to job queue
 	switch worker.jobType {
 	case Map:
@@ -62,7 +60,6 @@ func (mr *MapReduce) redoJob(worker WorkerInfo, waitGroup *sync.WaitGroup) {
 	case Reduce:
 		mr.reduceJobs = append(mr.reduceJobs, worker.lastJobId)
 	}
-	waitGroup.Done()
 }
 
 func (mr *MapReduce) getNextJob(jobType JobType) (DoJobArgs, error) {
@@ -77,7 +74,7 @@ func (mr *MapReduce) getNextJob(jobType JobType) (DoJobArgs, error) {
 	case Map:
 		jobArgs.Operation = Map
 		jobArgs.NumOtherPhase = mr.nReduce
-		if len(mr.jobStats) != 0 && len(mr.mapJobs) == 0 {
+		if mr.jobStats.length() != 0 && len(mr.mapJobs) == 0 {
 			return jobArgs, errors.New("Pending")
 		}
 
@@ -91,14 +88,15 @@ func (mr *MapReduce) getNextJob(jobType JobType) (DoJobArgs, error) {
 		} else {
 			mr.mapJobs = []int{}
 		}
-		mr.jobStats[jobNum] = true
+		mr.jobStats.writeMap(jobNum, true)
+
 		jobArgs.JobNumber = jobNum
 		return jobArgs, nil
 
 	case Reduce:
 		jobArgs.Operation = Reduce
 		jobArgs.NumOtherPhase = mr.nMap
-		if len(mr.jobStats) != 0 && len(mr.reduceJobs) == 0 {
+		if mr.jobStats.length() != 0 && len(mr.reduceJobs) == 0 {
 			return jobArgs, errors.New("Pending")
 		}
 
@@ -112,7 +110,8 @@ func (mr *MapReduce) getNextJob(jobType JobType) (DoJobArgs, error) {
 		} else {
 			mr.reduceJobs = []int{}
 		}
-		mr.jobStats[jobNum] = true
+		mr.jobStats.writeMap(jobNum, true)
+
 		jobArgs.JobNumber = jobNum
 		return jobArgs, nil
 	}
@@ -123,7 +122,6 @@ func (mr *MapReduce) RunMaster() *list.List {
 	// Your code here
 	mr.Workers = make(map[string]*WorkerInfo)
 
-	waitGroup := new(sync.WaitGroup)
 	jobsDone := false
 	var worker WorkerInfo
 	for !jobsDone {
@@ -133,13 +131,13 @@ func (mr *MapReduce) RunMaster() *list.List {
 			mr.Workers[regWorker] = workerInfo
 			go func() { mr.availableWorkers <- *mr.Workers[regWorker] }()
 		case worker = <-mr.failedWorkers:
-			waitGroup.Add(1)
-			go mr.redoJob(worker, waitGroup)
+			go mr.redoJob(worker)
 		case worker = <-mr.availableWorkers:
 			jobArgs, err := mr.getNextJob(worker.jobType)
 			if err != nil {
 				if err.Error() == "JobDone" {
 					if len(mr.mapJobs) == 0 && len(mr.reduceJobs) == 0 {
+						log.Printf("========RunMaster: JOB DONE===========")
 						jobsDone = true
 						break
 					} else if len(mr.mapJobs) == 0 {
@@ -150,16 +148,15 @@ func (mr *MapReduce) RunMaster() *list.List {
 				} else {
 					// pending
 					// reuse this worker
-					log.Printf("RunMaster: Pending %v", len(mr.jobStats))
+					//log.Printf("RunMaster: Pending %v", mr.jobStats.length())
+					//log.Printf("RunMaster: Worker %s\t%v\t%s", worker.address,worker.lastJobId,worker.jobType)
 					go func() { mr.availableWorkers <- worker }()
-					break
+					continue
 				}
 			}
-			waitGroup.Add(1)
-			go mr.scheduleJob(worker, jobArgs, waitGroup)
+			go mr.scheduleJob(worker, jobArgs)
 		}
 	}
-	waitGroup.Wait()
 	return mr.KillWorkers()
 
 }

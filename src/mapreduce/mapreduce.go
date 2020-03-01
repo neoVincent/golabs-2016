@@ -1,6 +1,8 @@
 package mapreduce
 
-import "fmt"
+import (
+	"fmt"
+)
 import "os"
 import "log"
 import "strconv"
@@ -66,7 +68,7 @@ type MapReduce struct {
 	// add any additional state here
 	mapJobs          []int
 	reduceJobs       []int
-	jobStats         map[int]bool
+	jobStats         *JobStats
 	failedWorkers    chan WorkerInfo
 	availableWorkers chan WorkerInfo
 }
@@ -92,7 +94,8 @@ func InitMapReduce(nmap int, nreduce int,
 		mr.reduceJobs[i] = i
 	}
 
-	mr.jobStats = make(map[int]bool, nmap)
+	//mr.jobStats = make(map[int]bool, nmap)
+	mr.jobStats = newJobStats()
 
 	mr.failedWorkers = make(chan WorkerInfo)
 	mr.availableWorkers = make(chan WorkerInfo)
